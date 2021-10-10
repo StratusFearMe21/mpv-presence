@@ -7,6 +7,7 @@ use libmpv_sys::{
     mpv_get_property_string, mpv_handle, mpv_observe_property, mpv_wait_event,
 };
 use libmpv_sys::{mpv_event_id_MPV_EVENT_PROPERTY_CHANGE, mpv_event_property};
+use std::ffi::c_void;
 use std::{
     ffi::{CStr, CString},
     os::raw::c_char,
@@ -35,24 +36,9 @@ impl<'a> Default for MpvTrack<'a> {
 
 #[no_mangle]
 unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
-    mpv_observe_property(
-        mpv,
-        0,
-        CString::new("pause").unwrap().as_ptr(),
-        mpv_format_MPV_FORMAT_FLAG,
-    );
-    mpv_observe_property(
-        mpv,
-        0,
-        CString::new("media-title").unwrap().as_ptr() as *const i8,
-        mpv_format_MPV_FORMAT_STRING,
-    );
-    mpv_observe_property(
-        mpv,
-        0,
-        CString::new("duration").unwrap().as_ptr() as *const i8,
-        mpv_format_MPV_FORMAT_INT64,
-    );
+    observe_property(mpv, 0, "pause", mpv_format_MPV_FORMAT_FLAG);
+    observe_property(mpv, 0, "media-title", mpv_format_MPV_FORMAT_STRING);
+    observe_property(mpv, 0, "duration", mpv_format_MPV_FORMAT_INT64);
     let mut track = MpvTrack::default();
     let mut client = discord_rich_presence::new_client("896460735360679986").unwrap();
     if let Err(e) = client.connect() {
@@ -78,14 +64,13 @@ unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
             } => {
                 let dataser = *(data as *mut mpv_event_property);
                 if dataser.format != mpv_format_MPV_FORMAT_NONE {
-                    let name = CStr::from_ptr(dataser.name).to_str().unwrap();
                     if dataser.format == mpv_format_MPV_FORMAT_FLAG {
                         track.paused = *(dataser.data as *mut bool);
                         if !track.paused {
                             let mut pos_s = 0;
-                            mpv_get_property(
+                            get_property(
                                 mpv,
-                                CString::new("time-remaining").unwrap().as_ptr(),
+                                "time-remaining",
                                 mpv_format_MPV_FORMAT_INT64,
                                 &mut pos_s as *mut i64 as _,
                             );
@@ -110,14 +95,8 @@ unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                         track.title = CStr::from_ptr(*(dataser.data as *mut *mut c_char))
                             .to_str()
                             .unwrap();
-                        let artist = mpv_get_property_string(
-                            mpv,
-                            CString::new("metadata/by-key/Artist").unwrap().as_ptr(),
-                        );
-                        let album = mpv_get_property_string(
-                            mpv,
-                            CString::new("metadata/by-key/Album").unwrap().as_ptr(),
-                        );
+                        let artist = get_property_string(mpv, "metadata/by-key/Artist");
+                        let album = get_property_string(mpv, "metadata/by-key/Album");
                         if !artist.is_null() {
                             track.artist = CStr::from_ptr(artist).to_str().unwrap();
                         } else {
@@ -143,9 +122,9 @@ unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                 ..
             } => {
                 let mut pos_s = 0;
-                mpv_get_property(
+                get_property(
                     mpv,
-                    CString::new("time-remaining").unwrap().as_ptr(),
+                    "time-remaining",
                     mpv_format_MPV_FORMAT_INT64,
                     &mut pos_s as *mut i64 as _,
                 );
@@ -171,4 +150,23 @@ unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
     }
     client.close().unwrap();
     return 0;
+}
+
+fn observe_property(handle: *mut mpv_handle, id: u64, name: &str, format: u32) {
+    let name = CString::new(name).unwrap();
+    unsafe {
+        mpv_observe_property(handle, id, name.as_ptr(), format);
+    }
+}
+
+fn get_property_string(handle: *mut mpv_handle, name: &str) -> *mut i8 {
+    let name = CString::new(name).unwrap();
+    unsafe { mpv_get_property_string(handle, name.as_ptr()) }
+}
+
+fn get_property(handle: *mut mpv_handle, name: &str, format: u32, var: *mut c_void) {
+    let name = CString::new(name).unwrap();
+    unsafe {
+        mpv_get_property(handle, name.as_ptr(), format, var);
+    }
 }
