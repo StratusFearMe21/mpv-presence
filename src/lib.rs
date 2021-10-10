@@ -1,10 +1,10 @@
 use discord_rich_presence::activity::{Assets, Timestamps};
 use discord_rich_presence::{activity, DiscordIpc};
 use libmpv_sys::{
-    mpv_event_id_MPV_EVENT_END_FILE, mpv_event_id_MPV_EVENT_PLAYBACK_RESTART,
-    mpv_event_id_MPV_EVENT_SHUTDOWN, mpv_format_MPV_FORMAT_FLAG, mpv_format_MPV_FORMAT_INT64,
-    mpv_format_MPV_FORMAT_NONE, mpv_format_MPV_FORMAT_STRING, mpv_get_property,
-    mpv_get_property_string, mpv_handle, mpv_observe_property, mpv_wait_event,
+    mpv_event_id_MPV_EVENT_PLAYBACK_RESTART, mpv_event_id_MPV_EVENT_SHUTDOWN,
+    mpv_format_MPV_FORMAT_FLAG, mpv_format_MPV_FORMAT_INT64, mpv_format_MPV_FORMAT_NONE,
+    mpv_format_MPV_FORMAT_STRING, mpv_get_property, mpv_get_property_string, mpv_handle,
+    mpv_observe_property, mpv_wait_event,
 };
 use libmpv_sys::{mpv_event_id_MPV_EVENT_PROPERTY_CHANGE, mpv_event_property};
 use std::ffi::c_void;
@@ -13,7 +13,6 @@ use std::{
     os::raw::c_char,
 };
 
-#[derive(Debug)]
 struct MpvTrack<'a> {
     album: &'a str,
     artist: &'a str,
@@ -35,7 +34,7 @@ impl<'a> Default for MpvTrack<'a> {
 }
 
 #[no_mangle]
-unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
+fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
     observe_property(mpv, 0, "pause", mpv_format_MPV_FORMAT_FLAG);
     observe_property(mpv, 0, "media-title", mpv_format_MPV_FORMAT_STRING);
     observe_property(mpv, 0, "duration", mpv_format_MPV_FORMAT_INT64);
@@ -47,8 +46,10 @@ unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
     }
     println!("RPC Connected");
     loop {
-        let ev = mpv_wait_event(mpv, 600.);
-        match *ev {
+        let ev = unsafe { *mpv_wait_event(mpv, 600.) };
+
+        #[allow(non_upper_case_globals)]
+        match ev {
             libmpv_sys::mpv_event {
                 event_id: mpv_event_id_MPV_EVENT_SHUTDOWN,
                 error: 0,
@@ -62,10 +63,10 @@ unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                 data,
                 ..
             } => {
-                let dataser = *(data as *mut mpv_event_property);
+                let dataser = unsafe { *(data as *mut mpv_event_property) };
                 if dataser.format != mpv_format_MPV_FORMAT_NONE {
                     if dataser.format == mpv_format_MPV_FORMAT_FLAG {
-                        track.paused = *(dataser.data as *mut bool);
+                        track.paused = unsafe { *(dataser.data as *mut bool) };
                         if !track.paused {
                             let mut pos_s = 0;
                             get_property(
@@ -92,18 +93,20 @@ unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                             );
                         client.set_activity(payload).unwrap();
                     } else if dataser.format == mpv_format_MPV_FORMAT_STRING {
-                        track.title = CStr::from_ptr(*(dataser.data as *mut *mut c_char))
-                            .to_str()
-                            .unwrap();
+                        track.title = unsafe {
+                            CStr::from_ptr(*(dataser.data as *mut *mut c_char))
+                                .to_str()
+                                .unwrap()
+                        };
                         let artist = get_property_string(mpv, "metadata/by-key/Artist");
                         let album = get_property_string(mpv, "metadata/by-key/Album");
                         if !artist.is_null() {
-                            track.artist = CStr::from_ptr(artist).to_str().unwrap();
+                            track.artist = unsafe { CStr::from_ptr(artist).to_str().unwrap() };
                         } else {
                             track.artist = "Unknown Artist";
                         }
                         if !album.is_null() {
-                            track.album = CStr::from_ptr(album).to_str().unwrap();
+                            track.album = unsafe { CStr::from_ptr(album).to_str().unwrap() };
                         } else {
                             track.artist = "Unknown Artist";
                         }
@@ -112,7 +115,7 @@ unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_secs() as i64
-                            + *(dataser.data as *mut i64);
+                            + unsafe { *(dataser.data as *mut i64) };
                     }
                 }
             }
@@ -149,7 +152,7 @@ unsafe fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
         }
     }
     client.close().unwrap();
-    return 0;
+    0
 }
 
 fn observe_property(handle: *mut mpv_handle, id: u64, name: &str, format: u32) {
