@@ -141,6 +141,10 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                         } else {
                             track.artist = "Unknown Artist";
                         }
+                        unsafe {
+                            libmpv_sys::mpv_free(artist as *mut u8 as _);
+                            libmpv_sys::mpv_free(album as *mut u8 as _);
+                        }
                     } else if name == "duration" {
                         track.duration = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
