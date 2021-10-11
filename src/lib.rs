@@ -19,6 +19,8 @@ struct MpvTrack<'a> {
     title: &'a str,
     duration: i64,
     paused: bool,
+    loop_file: &'a str,
+    loop_playlist: &'a str,
 }
 
 impl<'a> Default for MpvTrack<'a> {
@@ -29,6 +31,8 @@ impl<'a> Default for MpvTrack<'a> {
             title: "Unkown Title",
             duration: 0,
             paused: false,
+            loop_playlist: "no",
+            loop_file: "no",
         }
     }
 }
@@ -38,6 +42,8 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
     observe_property(mpv, 0, "pause", mpv_format_MPV_FORMAT_FLAG);
     observe_property(mpv, 0, "media-title", mpv_format_MPV_FORMAT_STRING);
     observe_property(mpv, 0, "duration", mpv_format_MPV_FORMAT_INT64);
+    observe_property(mpv, 0, "loop-file", mpv_format_MPV_FORMAT_STRING);
+    observe_property(mpv, 0, "loop-playlist", mpv_format_MPV_FORMAT_STRING);
     let mut track = MpvTrack::default();
     let mut client = discord_rich_presence::new_client("896460735360679986").unwrap();
     if let Err(e) = client.connect() {
@@ -65,7 +71,8 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
             } => {
                 let dataser = unsafe { *(data as *mut mpv_event_property) };
                 if dataser.format != mpv_format_MPV_FORMAT_NONE {
-                    if dataser.format == mpv_format_MPV_FORMAT_FLAG {
+                    let name = unsafe { CStr::from_ptr(dataser.name).to_str().unwrap() };
+                    if name == "pause" {
                         track.paused = unsafe { *(dataser.data as *mut bool) };
                         if !track.paused {
                             let mut pos_s = 0;
@@ -88,11 +95,28 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                             .assets(
                                 Assets::new()
                                     .large_image("mpv")
-                                    .small_image(if track.paused { "pause" } else { "play" })
-                                    .large_text(track.album),
+                                    .small_image(if track.paused {
+                                        "pause"
+                                    } else if track.loop_file == "inf" || track.loop_file == "yes" {
+                                        "loop"
+                                    } else if track.loop_playlist == "inf" {
+                                        "loop-playlist"
+                                    } else {
+                                        "play"
+                                    })
+                                    .large_text(track.album)
+                                    .small_text(if track.paused {
+                                        "Paused"
+                                    } else if track.loop_file == "inf" || track.loop_file == "yes" {
+                                        "Repeat Song"
+                                    } else if track.loop_playlist == "inf" {
+                                        "Repeat"
+                                    } else {
+                                        "Playing"
+                                    }),
                             );
                         client.set_activity(payload).unwrap();
-                    } else if dataser.format == mpv_format_MPV_FORMAT_STRING {
+                    } else if name == "media-title" {
                         track.title = unsafe {
                             CStr::from_ptr(*(dataser.data as *mut *mut c_char))
                                 .to_str()
@@ -110,12 +134,81 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                         } else {
                             track.artist = "Unknown Artist";
                         }
-                    } else if dataser.format == mpv_format_MPV_FORMAT_INT64 {
+                    } else if name == "duration" {
                         track.duration = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_secs() as i64
                             + unsafe { *(dataser.data as *mut i64) };
+                    } else if name == "loop-file" {
+                        println!("Loop file");
+                        track.loop_file = unsafe {
+                            CStr::from_ptr(*(dataser.data as *mut *mut c_char))
+                                .to_str()
+                                .unwrap()
+                        };
+                        let payload = activity::Activity::new()
+                            .details(track.title)
+                            .state(track.artist)
+                            .timestamps(Timestamps::new().end(track.duration))
+                            .assets(
+                                Assets::new()
+                                    .large_image("mpv")
+                                    .small_image(if track.paused {
+                                        "pause"
+                                    } else if track.loop_file == "inf" || track.loop_file == "yes" {
+                                        "loop"
+                                    } else if track.loop_playlist == "inf" {
+                                        "loop-playlist"
+                                    } else {
+                                        "play"
+                                    })
+                                    .large_text(track.album)
+                                    .small_text(if track.paused {
+                                        "Paused"
+                                    } else if track.loop_file == "inf" || track.loop_file == "yes" {
+                                        "Repeat Song"
+                                    } else if track.loop_playlist == "inf" {
+                                        "Repeat"
+                                    } else {
+                                        "Playing"
+                                    }),
+                            );
+                        client.set_activity(payload).unwrap();
+                    } else if name == "loop-playlist" {
+                        track.loop_playlist = unsafe {
+                            CStr::from_ptr(*(dataser.data as *mut *mut c_char))
+                                .to_str()
+                                .unwrap()
+                        };
+                        let payload = activity::Activity::new()
+                            .details(track.title)
+                            .state(track.artist)
+                            .timestamps(Timestamps::new().end(track.duration))
+                            .assets(
+                                Assets::new()
+                                    .large_image("mpv")
+                                    .small_image(if track.paused {
+                                        "pause"
+                                    } else if track.loop_file == "inf" || track.loop_file == "yes" {
+                                        "loop"
+                                    } else if track.loop_playlist == "inf" {
+                                        "loop-playlist"
+                                    } else {
+                                        "play"
+                                    })
+                                    .large_text(track.album)
+                                    .small_text(if track.paused {
+                                        "Paused"
+                                    } else if track.loop_file == "inf" || track.loop_file == "yes" {
+                                        "Repeat Song"
+                                    } else if track.loop_playlist == "inf" {
+                                        "Repeat"
+                                    } else {
+                                        "Playing"
+                                    }),
+                            );
+                        client.set_activity(payload).unwrap();
                     }
                 }
             }
@@ -143,8 +236,25 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                     .assets(
                         Assets::new()
                             .large_image("mpv")
-                            .small_image(if track.paused { "pause" } else { "play" })
-                            .large_text(track.album),
+                            .small_image(if track.paused {
+                                "pause"
+                            } else if track.loop_file == "inf" || track.loop_file == "yes" {
+                                "loop"
+                            } else if track.loop_playlist == "inf" {
+                                "loop-playlist"
+                            } else {
+                                "play"
+                            })
+                            .large_text(track.album)
+                            .small_text(if track.paused {
+                                "Paused"
+                            } else if track.loop_file == "inf" || track.loop_file == "yes" {
+                                "Repeat Song"
+                            } else if track.loop_playlist == "inf" {
+                                "Repeat"
+                            } else {
+                                "Playing"
+                            }),
                     );
                 client.set_activity(payload).unwrap();
             }
