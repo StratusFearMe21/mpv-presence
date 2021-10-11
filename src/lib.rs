@@ -12,10 +12,9 @@ use std::{
     ffi::{CStr, CString},
     os::raw::c_char,
 };
-
 struct MpvTrack<'a> {
-    album: &'a str,
-    artist: &'a str,
+    album: Option<MpvStr<'a>>,
+    artist: Option<MpvStr<'a>>,
     title: &'a str,
     duration: i64,
     paused: bool,
@@ -26,14 +25,22 @@ struct MpvTrack<'a> {
 impl<'a> Default for MpvTrack<'a> {
     fn default() -> Self {
         Self {
-            album: "Unknown Album",
-            artist: "Unknown Artist",
+            album: None,
+            artist: None,
             title: "Unkown Title",
             duration: 0,
             paused: false,
             loop_playlist: "no",
             loop_file: "no",
         }
+    }
+}
+
+#[derive(Debug, Hash, Eq, PartialEq)]
+pub struct MpvStr<'a>(&'a str);
+impl<'a> Drop for MpvStr<'a> {
+    fn drop(&mut self) {
+        unsafe { libmpv_sys::mpv_free(self.0.as_ptr() as *mut u8 as _) };
     }
 }
 
@@ -92,7 +99,11 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                             .set_activity(
                                 activity::Activity::new()
                                     .details(track.title)
-                                    .state(track.artist)
+                                    .state(if let Some(artist) = &track.artist {
+                                        artist.0
+                                    } else {
+                                        "Unknown Artist"
+                                    })
                                     .timestamps(Timestamps::new().end(track.duration))
                                     .assets(
                                         Assets::new()
@@ -108,7 +119,11 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                                             } else {
                                                 "play"
                                             })
-                                            .large_text(track.album)
+                                            .large_text(if let Some(album) = &track.album {
+                                                album.0
+                                            } else {
+                                                "Unknown Album"
+                                            })
                                             .small_text(if track.paused {
                                                 "Paused"
                                             } else if track.loop_file == "inf"
@@ -132,18 +147,16 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                         let artist = get_property_string(mpv, "metadata/by-key/Artist");
                         let album = get_property_string(mpv, "metadata/by-key/Album");
                         if !artist.is_null() {
-                            track.artist = unsafe { CStr::from_ptr(artist).to_str().unwrap() };
+                            track.artist =
+                                unsafe { Some(MpvStr(CStr::from_ptr(artist).to_str().unwrap())) };
                         } else {
-                            track.artist = "Unknown Artist";
+                            track.artist = None;
                         }
                         if !album.is_null() {
-                            track.album = unsafe { CStr::from_ptr(album).to_str().unwrap() };
+                            track.album =
+                                unsafe { Some(MpvStr(CStr::from_ptr(album).to_str().unwrap())) };
                         } else {
-                            track.artist = "Unknown Artist";
-                        }
-                        unsafe {
-                            libmpv_sys::mpv_free(artist as *mut u8 as _);
-                            libmpv_sys::mpv_free(album as *mut u8 as _);
+                            track.album = None;
                         }
                     } else if name == "duration" {
                         track.duration = std::time::SystemTime::now()
@@ -161,7 +174,11 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                             .set_activity(
                                 activity::Activity::new()
                                     .details(track.title)
-                                    .state(track.artist)
+                                    .state(if let Some(artist) = &track.artist {
+                                        artist.0
+                                    } else {
+                                        "Unknown Artist"
+                                    })
                                     .timestamps(Timestamps::new().end(track.duration))
                                     .assets(
                                         Assets::new()
@@ -177,7 +194,11 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                                             } else {
                                                 "play"
                                             })
-                                            .large_text(track.album)
+                                            .large_text(if let Some(album) = &track.album {
+                                                album.0
+                                            } else {
+                                                "Unknown Album"
+                                            })
                                             .small_text(if track.paused {
                                                 "Paused"
                                             } else if track.loop_file == "inf"
@@ -202,7 +223,11 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                             .set_activity(
                                 activity::Activity::new()
                                     .details(track.title)
-                                    .state(track.artist)
+                                    .state(if let Some(artist) = &track.artist {
+                                        artist.0
+                                    } else {
+                                        "Unknown Artist"
+                                    })
                                     .timestamps(Timestamps::new().end(track.duration))
                                     .assets(
                                         Assets::new()
@@ -218,7 +243,11 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                                             } else {
                                                 "play"
                                             })
-                                            .large_text(track.album)
+                                            .large_text(if let Some(album) = &track.album {
+                                                album.0
+                                            } else {
+                                                "Unknown Album"
+                                            })
                                             .small_text(if track.paused {
                                                 "Paused"
                                             } else if track.loop_file == "inf"
@@ -257,7 +286,11 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                     .set_activity(
                         activity::Activity::new()
                             .details(track.title)
-                            .state(track.artist)
+                            .state(if let Some(artist) = &track.artist {
+                                artist.0
+                            } else {
+                                "Unknown Artist"
+                            })
                             .timestamps(Timestamps::new().end(track.duration))
                             .assets(
                                 Assets::new()
@@ -271,7 +304,11 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                                     } else {
                                         "play"
                                     })
-                                    .large_text(track.album)
+                                    .large_text(if let Some(album) = &track.album {
+                                        album.0
+                                    } else {
+                                        "Unknown Album"
+                                    })
                                     .small_text(if track.paused {
                                         "Paused"
                                     } else if track.loop_file == "inf" || track.loop_file == "yes" {
