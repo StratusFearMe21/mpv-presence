@@ -12,14 +12,59 @@ use std::{
     ffi::{CStr, CString},
     os::raw::c_char,
 };
+
+macro_rules! set_activity {
+    ($client:expr, $track:expr) => {
+        $client
+            .set_activity(
+                activity::Activity::new()
+                    .details($track.title)
+                    .state(if let Some(artist) = &$track.artist {
+                        artist.0
+                    } else {
+                        "Unknown Artist"
+                    })
+                    .timestamps(Timestamps::new().end($track.duration))
+                    .assets(
+                        Assets::new()
+                            .large_image("mpv")
+                            .small_image(if $track.paused {
+                                "pause"
+                            } else if $track.loop_file {
+                                "loop"
+                            } else if $track.loop_playlist {
+                                "loop-playlist"
+                            } else {
+                                "play"
+                            })
+                            .large_text(if let Some(album) = &$track.album {
+                                album.0
+                            } else {
+                                "Unknown Album"
+                            })
+                            .small_text(if $track.paused {
+                                "Paused"
+                            } else if $track.loop_file {
+                                "Repeat Song"
+                            } else if $track.loop_playlist {
+                                "Repeat"
+                            } else {
+                                "Playing"
+                            }),
+                    ),
+            )
+            .unwrap();
+    };
+}
+
 struct MpvTrack<'a> {
     album: Option<MpvStr<'a>>,
     artist: Option<MpvStr<'a>>,
     title: &'a str,
     duration: i64,
     paused: bool,
-    loop_file: &'a str,
-    loop_playlist: &'a str,
+    loop_file: bool,
+    loop_playlist: bool,
 }
 
 impl<'a> Default for MpvTrack<'a> {
@@ -30,8 +75,8 @@ impl<'a> Default for MpvTrack<'a> {
             title: "Unkown Title",
             duration: 0,
             paused: false,
-            loop_playlist: "no",
-            loop_file: "no",
+            loop_playlist: false,
+            loop_file: false,
         }
     }
 }
@@ -59,10 +104,8 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
     }
     println!("RPC Connected");
     loop {
-        let ev = unsafe { *mpv_wait_event(mpv, 600.) };
-
         #[allow(non_upper_case_globals)]
-        match ev {
+        match unsafe { *mpv_wait_event(mpv, 600.) } {
             libmpv_sys::mpv_event {
                 event_id: mpv_event_id_MPV_EVENT_SHUTDOWN,
                 error: 0,
@@ -78,191 +121,77 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
             } => {
                 let dataser = unsafe { *(data as *mut mpv_event_property) };
                 if dataser.format != mpv_format_MPV_FORMAT_NONE {
-                    let name = unsafe { CStr::from_ptr(dataser.name).to_str().unwrap() };
-                    if name == "pause" {
-                        track.paused = unsafe { *(dataser.data as *mut bool) };
-                        if !track.paused {
-                            let mut pos_s = 0;
-                            get_property(
-                                mpv,
-                                "time-remaining",
-                                mpv_format_MPV_FORMAT_INT64,
-                                &mut pos_s as *mut i64 as _,
-                            );
+                    match unsafe { CStr::from_ptr(dataser.name).to_str().unwrap() } {
+                        "pause" => {
+                            track.paused = unsafe { *(dataser.data as *mut bool) };
+                            if !track.paused {
+                                let mut pos_s = 0;
+                                get_property(
+                                    mpv,
+                                    "time-remaining",
+                                    mpv_format_MPV_FORMAT_INT64,
+                                    &mut pos_s as *mut i64 as _,
+                                );
+                                track.duration = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs()
+                                    as i64
+                                    + pos_s;
+                            }
+                            set_activity!(client, track);
+                        }
+                        "media-title" => {
+                            track.title = unsafe {
+                                CStr::from_ptr(*(dataser.data as *mut *mut c_char))
+                                    .to_str()
+                                    .unwrap()
+                            };
+                            let artist = get_property_string(mpv, "metadata/by-key/Artist");
+                            let album = get_property_string(mpv, "metadata/by-key/Album");
+                            if !artist.is_null() {
+                                track.artist = unsafe {
+                                    Some(MpvStr(CStr::from_ptr(artist).to_str().unwrap()))
+                                };
+                            } else {
+                                track.artist = None;
+                            }
+                            if !album.is_null() {
+                                track.album = unsafe {
+                                    Some(MpvStr(CStr::from_ptr(album).to_str().unwrap()))
+                                };
+                            } else {
+                                track.album = None;
+                            }
+                        }
+                        "duration" => {
                             track.duration = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap()
                                 .as_secs() as i64
-                                + pos_s;
+                                + unsafe { *(dataser.data as *mut i64) };
                         }
-                        client
-                            .set_activity(
-                                activity::Activity::new()
-                                    .details(track.title)
-                                    .state(if let Some(artist) = &track.artist {
-                                        artist.0
-                                    } else {
-                                        "Unknown Artist"
-                                    })
-                                    .timestamps(Timestamps::new().end(track.duration))
-                                    .assets(
-                                        Assets::new()
-                                            .large_image("mpv")
-                                            .small_image(if track.paused {
-                                                "pause"
-                                            } else if track.loop_file == "inf"
-                                                || track.loop_file == "yes"
-                                            {
-                                                "loop"
-                                            } else if track.loop_playlist == "inf" {
-                                                "loop-playlist"
-                                            } else {
-                                                "play"
-                                            })
-                                            .large_text(if let Some(album) = &track.album {
-                                                album.0
-                                            } else {
-                                                "Unknown Album"
-                                            })
-                                            .small_text(if track.paused {
-                                                "Paused"
-                                            } else if track.loop_file == "inf"
-                                                || track.loop_file == "yes"
-                                            {
-                                                "Repeat Song"
-                                            } else if track.loop_playlist == "inf" {
-                                                "Repeat"
-                                            } else {
-                                                "Playing"
-                                            }),
-                                    ),
-                            )
-                            .unwrap();
-                    } else if name == "media-title" {
-                        track.title = unsafe {
-                            CStr::from_ptr(*(dataser.data as *mut *mut c_char))
-                                .to_str()
-                                .unwrap()
-                        };
-                        let artist = get_property_string(mpv, "metadata/by-key/Artist");
-                        let album = get_property_string(mpv, "metadata/by-key/Album");
-                        if !artist.is_null() {
-                            track.artist =
-                                unsafe { Some(MpvStr(CStr::from_ptr(artist).to_str().unwrap())) };
-                        } else {
-                            track.artist = None;
+                        "loop-file" => {
+                            track.loop_file = matches!(
+                                unsafe {
+                                    CStr::from_ptr(*(dataser.data as *mut *mut c_char))
+                                        .to_str()
+                                        .unwrap()
+                                },
+                                "inf" | "yes"
+                            );
+                            set_activity!(client, track);
                         }
-                        if !album.is_null() {
-                            track.album =
-                                unsafe { Some(MpvStr(CStr::from_ptr(album).to_str().unwrap())) };
-                        } else {
-                            track.album = None;
+                        "loop-playlist" => {
+                            track.loop_playlist = unsafe {
+                                CStr::from_ptr(*(dataser.data as *mut *mut c_char))
+                                    .to_str()
+                                    .unwrap()
+                            } == "yes";
+                            set_activity!(client, track);
                         }
-                    } else if name == "duration" {
-                        track.duration = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs() as i64
-                            + unsafe { *(dataser.data as *mut i64) };
-                    } else if name == "loop-file" {
-                        track.loop_file = unsafe {
-                            CStr::from_ptr(*(dataser.data as *mut *mut c_char))
-                                .to_str()
-                                .unwrap()
-                        };
-                        client
-                            .set_activity(
-                                activity::Activity::new()
-                                    .details(track.title)
-                                    .state(if let Some(artist) = &track.artist {
-                                        artist.0
-                                    } else {
-                                        "Unknown Artist"
-                                    })
-                                    .timestamps(Timestamps::new().end(track.duration))
-                                    .assets(
-                                        Assets::new()
-                                            .large_image("mpv")
-                                            .small_image(if track.paused {
-                                                "pause"
-                                            } else if track.loop_file == "inf"
-                                                || track.loop_file == "yes"
-                                            {
-                                                "loop"
-                                            } else if track.loop_playlist == "inf" {
-                                                "loop-playlist"
-                                            } else {
-                                                "play"
-                                            })
-                                            .large_text(if let Some(album) = &track.album {
-                                                album.0
-                                            } else {
-                                                "Unknown Album"
-                                            })
-                                            .small_text(if track.paused {
-                                                "Paused"
-                                            } else if track.loop_file == "inf"
-                                                || track.loop_file == "yes"
-                                            {
-                                                "Repeat Song"
-                                            } else if track.loop_playlist == "inf" {
-                                                "Repeat"
-                                            } else {
-                                                "Playing"
-                                            }),
-                                    ),
-                            )
-                            .unwrap();
-                    } else if name == "loop-playlist" {
-                        track.loop_playlist = unsafe {
-                            CStr::from_ptr(*(dataser.data as *mut *mut c_char))
-                                .to_str()
-                                .unwrap()
-                        };
-                        client
-                            .set_activity(
-                                activity::Activity::new()
-                                    .details(track.title)
-                                    .state(if let Some(artist) = &track.artist {
-                                        artist.0
-                                    } else {
-                                        "Unknown Artist"
-                                    })
-                                    .timestamps(Timestamps::new().end(track.duration))
-                                    .assets(
-                                        Assets::new()
-                                            .large_image("mpv")
-                                            .small_image(if track.paused {
-                                                "pause"
-                                            } else if track.loop_file == "inf"
-                                                || track.loop_file == "yes"
-                                            {
-                                                "loop"
-                                            } else if track.loop_playlist == "inf" {
-                                                "loop-playlist"
-                                            } else {
-                                                "play"
-                                            })
-                                            .large_text(if let Some(album) = &track.album {
-                                                album.0
-                                            } else {
-                                                "Unknown Album"
-                                            })
-                                            .small_text(if track.paused {
-                                                "Paused"
-                                            } else if track.loop_file == "inf"
-                                                || track.loop_file == "yes"
-                                            {
-                                                "Repeat Song"
-                                            } else if track.loop_playlist == "inf" {
-                                                "Repeat"
-                                            } else {
-                                                "Playing"
-                                            }),
-                                    ),
-                            )
-                            .unwrap();
-                    }
+                        _ => {}
+                    };
                 }
             }
             libmpv_sys::mpv_event {
@@ -282,45 +211,7 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                     .unwrap()
                     .as_secs() as i64
                     + pos_s;
-                client
-                    .set_activity(
-                        activity::Activity::new()
-                            .details(track.title)
-                            .state(if let Some(artist) = &track.artist {
-                                artist.0
-                            } else {
-                                "Unknown Artist"
-                            })
-                            .timestamps(Timestamps::new().end(track.duration))
-                            .assets(
-                                Assets::new()
-                                    .large_image("mpv")
-                                    .small_image(if track.paused {
-                                        "pause"
-                                    } else if track.loop_file == "inf" || track.loop_file == "yes" {
-                                        "loop"
-                                    } else if track.loop_playlist == "inf" {
-                                        "loop-playlist"
-                                    } else {
-                                        "play"
-                                    })
-                                    .large_text(if let Some(album) = &track.album {
-                                        album.0
-                                    } else {
-                                        "Unknown Album"
-                                    })
-                                    .small_text(if track.paused {
-                                        "Paused"
-                                    } else if track.loop_file == "inf" || track.loop_file == "yes" {
-                                        "Repeat Song"
-                                    } else if track.loop_playlist == "inf" {
-                                        "Repeat"
-                                    } else {
-                                        "Playing"
-                                    }),
-                            ),
-                    )
-                    .unwrap();
+                set_activity!(client, track);
             }
             libmpv_sys::mpv_event { .. } => {}
         }
