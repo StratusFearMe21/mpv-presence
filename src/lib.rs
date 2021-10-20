@@ -1,4 +1,4 @@
-use discord_rich_presence::activity::{Assets, Timestamps};
+use discord_rich_presence::activity::{Assets, Button, Timestamps};
 use discord_rich_presence::{activity, DiscordIpc};
 use libmpv_sys::{
     mpv_event_id_MPV_EVENT_PLAYBACK_RESTART, mpv_event_id_MPV_EVENT_SHUTDOWN,
@@ -15,51 +15,62 @@ use std::{
 
 macro_rules! set_activity {
     ($client:expr, $track:expr) => {
-        $client
-            .set_activity(
-                activity::Activity::new()
-                    .details($track.title)
-                    .state(if let Some(artist) = &$track.artist {
-                        artist.0
+        let payload = activity::Activity::new()
+            .details($track.title)
+            .state(if let Some(artist) = &$track.artist {
+                artist.0
+            } else {
+                "Unknown Artist"
+            })
+            .timestamps(Timestamps::new().end($track.duration))
+            .assets(
+                Assets::new()
+                    .large_image("mpv")
+                    .small_image(if $track.paused {
+                        "pause"
+                    } else if $track.loop_file {
+                        "loop"
+                    } else if $track.loop_playlist {
+                        "loop-playlist"
                     } else {
-                        "Unknown Artist"
+                        "play"
                     })
-                    .timestamps(Timestamps::new().end($track.duration))
-                    .assets(
-                        Assets::new()
-                            .large_image("mpv")
-                            .small_image(if $track.paused {
-                                "pause"
-                            } else if $track.loop_file {
-                                "loop"
-                            } else if $track.loop_playlist {
-                                "loop-playlist"
-                            } else {
-                                "play"
-                            })
-                            .large_text(if let Some(album) = &$track.album {
-                                album.0
-                            } else {
-                                "Unknown Album"
-                            })
-                            .small_text(if $track.paused {
-                                "Paused"
-                            } else if $track.loop_file {
-                                "Repeat Song"
-                            } else if $track.loop_playlist {
-                                "Repeat"
-                            } else {
-                                "Playing"
-                            }),
-                    ),
-            )
-            .unwrap();
+                    .large_text(if let Some(album) = &$track.album {
+                        album.0
+                    } else {
+                        "Unknown Album"
+                    })
+                    .small_text(if $track.paused {
+                        "Paused"
+                    } else if $track.loop_file {
+                        "Repeat Song"
+                    } else if $track.loop_playlist {
+                        "Repeat"
+                    } else {
+                        "Playing"
+                    }),
+            );
+        if $client
+            .set_activity(if let Some(path) = &$track.path {
+                if path.0.starts_with("http") {
+                    payload.buttons(vec![Button::new("Watch Together", path.0)])
+                } else {
+                    payload
+                }
+            } else {
+                payload
+            })
+            .is_err()
+        {
+            $client.reconnect().ok();
+        }
     };
 }
 
 struct MpvTrack<'a> {
     album: Option<MpvStr<'a>>,
     artist: Option<MpvStr<'a>>,
+    path: Option<MpvStr<'a>>,
     title: &'a str,
     duration: i64,
     paused: bool,
@@ -72,6 +83,7 @@ impl<'a> Default for MpvTrack<'a> {
         Self {
             album: None,
             artist: None,
+            path: None,
             title: "Unkown Title",
             duration: 0,
             paused: false,
@@ -149,6 +161,7 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                             };
                             let artist = get_property_string(mpv, "metadata/by-key/Artist");
                             let album = get_property_string(mpv, "metadata/by-key/Album");
+                            let path = get_property_string(mpv, "path");
                             if !artist.is_null() {
                                 track.artist = unsafe {
                                     Some(MpvStr(CStr::from_ptr(artist).to_str().unwrap()))
@@ -162,6 +175,12 @@ fn mpv_open_cplugin(mpv: *mut mpv_handle) -> i8 {
                                 };
                             } else {
                                 track.album = None;
+                            }
+                            if !path.is_null() {
+                                track.path =
+                                    unsafe { Some(MpvStr(CStr::from_ptr(path).to_str().unwrap())) };
+                            } else {
+                                track.path = None;
                             }
                         }
                         "duration" => {
