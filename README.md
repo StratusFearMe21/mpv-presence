@@ -23,12 +23,4 @@ cp target/release/libmpv_presence.so ~/.config/mpv/scripts
 
 ### Windows
 
-To install from source
-
-```bash
-git clone https://github.com/StratusFearMe21/mpv_presence
-cd mpv_presence
-cargo build --release
-```
-
-Now move the DLL file generated in `target/release/mpv_presence.dll` to wherever your MPV config dir is in the scripts folder.
+C Plugins don't work on Windows unfortunately.
